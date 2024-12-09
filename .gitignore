@@ -1,9 +1,8 @@
 .DS_Store
 .idea
 *.zip
-data/Masks_cleaned/
-data/Images_cleaned/
 data/water_bodies/
+data/.DS_Store
 *.png
 *.jepg
 *.jpg
