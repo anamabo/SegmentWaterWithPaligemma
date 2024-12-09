@@ -28,16 +28,11 @@ to the virtual environment created.
 The original dataset is in Kaggle. It can be downloaded from [this link](https://www.kaggle.com/datasets/franciscoescobar/satellite-images-of-water-bodies). 
 
 Since some masks are not correct, I manually selected the correct images. You can read [this blog post]()
-to see how I did it. In [this link](https://drive.google.com/drive/folders/1U9MkU1fU6uZQrbN5-SAvewOU4dITuhtj?usp=sharing) 
-you can get the final set of images.  
-
-* Download `Mask_cleaned.zip` and `Images_cleaned.zip` from the link above.
-* Unzip the files and place them in the `data/` folder.
+to see how I did it. In the folder `data/` you can find the final set of images.
 
 ## Create a dataset to fine-tune Paligemma
 
-Once the cleaned images and masks are added in `data/`, you can run the following command 
-to create the dataset used by Paligemma:
+To create the dataset used by Paligemma, run this command:
 
 ```
 > python convert.py --data_path=<absolute path to data/> --masks_folder_name=Masks_cleaned --images_folder_name=Images_cleaned
@@ -53,4 +48,4 @@ In your Google Drive:
 * Also copy [This notebook](https://colab.research.google.com/drive/1t64cFa9RxjLn8_gLib64rbW_LyYuBKgE?usp=sharing). 
 * Make sure to set a proper running time. It can be T4 GPU or A 100 GPU. 
 
-You are ready to fine-tune Paligemma.
+You are ready to fine-tune Paligemma for segmentation.
