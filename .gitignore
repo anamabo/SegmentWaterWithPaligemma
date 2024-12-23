@@ -7,3 +7,4 @@ data/.DS_Store
 *.jepg
 *.jpg
 Pipfile.lock
+big_vision_repo

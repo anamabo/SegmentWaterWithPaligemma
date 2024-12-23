@@ -1,6 +1,15 @@
+"""
+Code to prepare the data for Paligemma.
+The formatting of the bounding boxes and masks is based on
+Robolow's blog on how to prepare data to fine-tune Paligemma2,
+section: Extra: Preparing Data for PaliGemma 2 Instance Segmentation Training.
+https://blog.roboflow.com/fine-tune-paligemma-2/
+"""
+
 import json
 import logging
 import os
+import sys
 import random
 import shutil
 
@@ -8,10 +17,19 @@ import click
 import cv2
 import numpy as np
 from matplotlib import pyplot as plt
+import tensorflow as tf
+
+if "big_vision_repo" not in sys.path:
+  sys.path.append("big_vision_repo")
+
+from big_vision_repo.big_vision.pp.proj.paligemma.segmentation import get_checkpoint
+from big_vision_repo.big_vision.pp.proj.paligemma.segmentation import encode_to_codebook_indices
 
 logging.basicConfig()
 logging.getLogger().setLevel(logging.INFO)
 random.seed(123)
+
+CHECKPOINT = get_checkpoint(model='oi')
 
 
 def get_file_names(data_path: str, file_name: str) -> list:
@@ -33,80 +51,6 @@ def get_bounding_box(contour):
     x1, y1, w, h = cv2.boundingRect(contour)
     x2, y2 = x1 + w, y1 + h
     return x1, y1, x2, y2
-
-
-def get_padded_bbox(
-    bbox_coords: tuple,
-    image_height: int,
-    image_width: int,
-    detection_factor: int,
-    pad: int = 4,
-) -> np.ndarray:
-    """new_size is the size of the images in Paligemma"""
-    x1_bbox, y1_bbox, x2_bbox, y2_bbox = bbox_coords
-    new_bbox = np.array(
-        [
-            y1_bbox / image_height,
-            x1_bbox / image_width,
-            y2_bbox / image_height,
-            x2_bbox / image_width,
-        ]
-    )
-    new_bbox *= detection_factor  # needed for paliGemma
-    new_bbox = new_bbox.astype(int)
-    # pad with zeros to the left
-    paligemma_bbox = np.char.zfill(new_bbox.astype(str), width=pad)
-    return paligemma_bbox
-
-
-def format_padded_info(info_array: np.ndarray, case: str) -> str:
-    if case == "bbox":
-        return "".join([f"<loc{element}>" for element in info_array])
-    elif case == "seg":
-        return "".join([f"<seg{element}>" for element in info_array])
-    else:
-        raise ValueError("Case not recognized. either bbox or seg")
-
-
-def get_padded_seg_points(
-    seg_points,
-    image_height: int,
-    image_width: int,
-    segmentation_factor: int,
-) -> np.ndarray:
-    # For segmentation, we need coords = y,x
-    scaled_points = np.array(
-        [
-            (
-                coords[1] / image_height,
-                coords[0] / image_width,
-            )
-            for coords in seg_points
-        ]
-    )
-
-    scaled_points *= segmentation_factor
-    scaled_points = np.round(scaled_points).astype(int).flatten()
-
-    paligemma_output = np.char.zfill(scaled_points.astype(str), width=3)
-    return paligemma_output
-
-
-def select_points_in_one_contour(
-    contour: np.ndarray, npoints: int = 8
-) -> np.ndarray:
-    """npoints= 8 is the requirement for Paligemma
-    output: npoints x 2 array with the coordinates of the points (x, y)
-    """
-    random_indices = np.random.choice(
-        contour.shape[0], size=npoints, replace=False
-    )
-    random_coordinates = contour[random_indices]
-    random_coordinates = np.reshape(
-        random_coordinates,
-        shape=(random_coordinates.shape[0], random_coordinates.shape[2]),
-    )
-    return random_coordinates
 
 
 def get_contours_coordinates(ccontours) -> dict:
@@ -137,6 +81,45 @@ def plot_image_and_contours(image, contour, points=None):
     plt.show()
 
 
+def format_bbox(y1, x1, y2, x2, h: int, w:int, bbox_tokens: tf.Tensor) -> tf.Tensor:
+    bbox = np.array([y1, x1, y2, x2]) / np.array([h, w, h, w])
+    binned_loc = tf.cast(tf.round(bbox * 1023), tf.int32)
+    binned_loc = tf.clip_by_value(binned_loc, 0, 1023)
+    loc_string = tf.strings.reduce_join(tf.gather(bbox_tokens, binned_loc))
+    return loc_string
+
+
+def get_mask_from_contour(h: int, w: int, cnt: np.ndarray) -> np.ndarray:
+    new_mask = np.zeros(shape=(h, w), dtype=np.uint8)
+    cv2.drawContours(new_mask,
+                     [cnt],
+                     contourIdx=0,
+                     color=255,
+                     thickness=cv2.FILLED,
+                     )
+    # convert to bool
+    new_mask = new_mask.astype(bool).copy()
+    return new_mask
+
+
+def format_mask(boolean_mask: np.ndarray, y1, x1, y2, x2, segment_tokens: tf.Tensor):
+    tensor_mask = tf.convert_to_tensor(boolean_mask.astype(np.uint8), dtype=tf.uint8)
+    yy1 = tf.cast(tf.round(y1), tf.int32)
+    xx1 = tf.cast(tf.round(x1), tf.int32)
+    yy2 = tf.cast(tf.round(y2), tf.int32)
+    xx2 = tf.cast(tf.round(x2), tf.int32)
+
+    tensor_mask = tf.image.resize(
+        tensor_mask[None, yy1:yy2, xx1:xx2, None],
+        [64, 64],
+        method='bilinear',
+        antialias=True,
+    )
+    mask_indices = encode_to_codebook_indices(CHECKPOINT, tensor_mask)[0]
+    mask_string = tf.strings.reduce_join(tf.gather(segment_tokens, mask_indices))
+    return mask_string
+
+
 def create_output_for_paligemma(
     mask_path,
     mask_name: str,
@@ -144,9 +127,7 @@ def create_output_for_paligemma(
     epsilon: float,
     cclass: str,
     prefix: str,
-    det_factor: int,
-    seg_factor: int,
-    npoints: int = 8,  # n segmentations points in Paligemma
+    npoints: int,
 ) -> dict:
     """Given an image, it creates a dict with the output for paligemma.
     IMPORTANT: This function assumes the same filename for both images and masks."""
@@ -183,6 +164,10 @@ def create_output_for_paligemma(
         # plot the image and the contours
         # plot_image_and_contours(mask, contours_r)
 
+        # Define the tokens for the output
+        loc_tokens = tf.constant(['<loc%04d>' % i for i in range(1024)])
+        seg_tokens = tf.constant(['<seg%03d>' % i for i in range(128)])
+
         # For each contour, get the output for paligemma
         paligemma_output = []
         for counter, contour in enumerate(contours_r):
@@ -190,37 +175,22 @@ def create_output_for_paligemma(
             # Get bounding box of the contour
             x1, y1, x2, y2 = get_bounding_box(contour)
 
-            # scale bounding boxes
-            padded_bbox = get_padded_bbox(
-                bbox_coords=(x1, y1, x2, y2),
-                image_height=im_height,
-                image_width=im_width,
-                detection_factor=det_factor,
-            )
+            # Get formatted bbox
+            bbox_loc_string = format_bbox(y1, x1, y2, x2, im_height, im_width, loc_tokens)
 
-            # Format the bounding box for Paligemma
-            line_bbox = format_padded_info(padded_bbox, case="bbox")
+            # get the corresponding mask of the contour
+            bool_mask = get_mask_from_contour(im_height, im_width, contour)
 
-            # Get segmentation points (inside the bbox)
-            points = select_points_in_one_contour(
-                contour=contour, npoints=npoints
-            )
+            # Get the formatted mask
+            mask_loc_string = format_mask(bool_mask, y1, x1, y2, x2, seg_tokens)
 
-            # Scale the points
-            padded_points = get_padded_seg_points(
-                points,
-                image_height=im_height,
-                image_width=im_width,
-                segmentation_factor=seg_factor,
-            )
-
-            line_points = format_padded_info(padded_points, case="seg")
+            suffix = tf.strings.join([bbox_loc_string, mask_loc_string])
 
             paligemma_output.append(
-                line_bbox + "" + line_points + " " + cclass
+                f"{suffix.numpy().decode('utf-8')} {cclass}"
             )
 
-        paligemma_output = "; ".join(paligemma_output)
+        paligemma_output = " ; ".join(paligemma_output)
 
         final_output = {
             "image": mask_name,
@@ -251,18 +221,6 @@ def create_output_for_paligemma(
     help="The name of the folder with the corrected images.",
 )
 @click.option(
-    "--detection_factor",
-    default=1024,
-    type=int,
-    help="Factor to scale the bounding boxes.",
-)
-@click.option(
-    "--segmentation_factor",
-    default=128,
-    type=int,
-    help="Factor to scale the segmentation points.",
-)
-@click.option(
     "--output_folder_name",
     default="water_bodies",
     type=str,
@@ -281,6 +239,12 @@ def create_output_for_paligemma(
     help="threshold used in the contour approximation. The smaller the value, the more points in the contour.",
 )
 @click.option(
+    "--npoints",
+    default=8,
+    type=int,
+    help="min no. points that a contour must have to be considered.",
+)
+@click.option(
     "--prefix",
     default="segment water",
     type=str,
@@ -296,11 +260,10 @@ def main(
     data_path,
     masks_folder_name,
     images_folder_name,
-    detection_factor,
-    segmentation_factor,
     output_folder_name,
     threshold,
     epsilon,
+    npoints,
     prefix,
     class_in_file,
 ):
@@ -335,8 +298,7 @@ def main(
                 epsilon=epsilon,
                 cclass=class_in_file,
                 prefix=prefix,
-                det_factor=detection_factor,
-                seg_factor=segmentation_factor,
+                npoints=npoints,
             )
             paligemma_list.append(output_line)
 
