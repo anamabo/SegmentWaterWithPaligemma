@@ -9,27 +9,32 @@ https://blog.roboflow.com/fine-tune-paligemma-2/
 import json
 import logging
 import os
-import sys
 import random
 import shutil
+import sys
 
 import click
 import cv2
+import matplotlib
 import numpy as np
-from matplotlib import pyplot as plt
 import tensorflow as tf
+from matplotlib import pyplot as plt
 
 if "big_vision_repo" not in sys.path:
-  sys.path.append("big_vision_repo")
+    sys.path.append("big_vision_repo")
 
-from big_vision_repo.big_vision.pp.proj.paligemma.segmentation import get_checkpoint
-from big_vision_repo.big_vision.pp.proj.paligemma.segmentation import encode_to_codebook_indices
+from big_vision_repo.big_vision.pp.proj.paligemma.segmentation import (
+    encode_to_codebook_indices,
+    get_checkpoint,
+)
 
 logging.basicConfig()
 logging.getLogger().setLevel(logging.INFO)
 random.seed(123)
 
-CHECKPOINT = get_checkpoint(model='oi')
+CHECKPOINT = get_checkpoint(model="oi")
+
+matplotlib.use("macosx")
 
 
 def get_file_names(data_path: str, file_name: str) -> list:
@@ -59,12 +64,8 @@ def get_contours_coordinates(ccontours) -> dict:
     contours_coords = dict()
     for n, contour in enumerate(reshaped_cnts):
         flatten_cnt = contour.flatten()
-        xvals = [
-            flatten_cnt[x] for x in range(0, len(flatten_cnt), 2)
-        ]  # even=x
-        yvals = [
-            flatten_cnt[y] for y in range(1, len(flatten_cnt), 2)
-        ]  # odd=y
+        xvals = [flatten_cnt[x] for x in range(0, len(flatten_cnt), 2)]  # even=x
+        yvals = [flatten_cnt[y] for y in range(1, len(flatten_cnt), 2)]  # odd=y
         contours_coords[n] = (xvals, yvals)
     return contours_coords
 
@@ -78,10 +79,12 @@ def plot_image_and_contours(image, contour, points=None):
     if points is not None:
         for (xp, yp) in points:
             ax.plot(xp, yp, "bo")
+    fig.canvas.draw()
+    fig.canvas.tostring_argb()
     plt.show()
 
 
-def format_bbox(y1, x1, y2, x2, h: int, w:int, bbox_tokens: tf.Tensor) -> tf.Tensor:
+def format_bbox(y1, x1, y2, x2, h: int, w: int, bbox_tokens: tf.Tensor) -> tf.Tensor:
     bbox = np.array([y1, x1, y2, x2]) / np.array([h, w, h, w])
     binned_loc = tf.cast(tf.round(bbox * 1023), tf.int32)
     binned_loc = tf.clip_by_value(binned_loc, 0, 1023)
@@ -91,12 +94,13 @@ def format_bbox(y1, x1, y2, x2, h: int, w:int, bbox_tokens: tf.Tensor) -> tf.Ten
 
 def get_mask_from_contour(h: int, w: int, cnt: np.ndarray) -> np.ndarray:
     new_mask = np.zeros(shape=(h, w), dtype=np.uint8)
-    cv2.drawContours(new_mask,
-                     [cnt],
-                     contourIdx=0,
-                     color=255,
-                     thickness=cv2.FILLED,
-                     )
+    cv2.drawContours(
+        new_mask,
+        [cnt],
+        contourIdx=0,
+        color=255,
+        thickness=cv2.FILLED,
+    )
     # convert to bool
     new_mask = new_mask.astype(bool).copy()
     return new_mask
@@ -112,7 +116,7 @@ def format_mask(boolean_mask: np.ndarray, y1, x1, y2, x2, segment_tokens: tf.Ten
     tensor_mask = tf.image.resize(
         tensor_mask[None, yy1:yy2, xx1:xx2, None],
         [64, 64],
-        method='bilinear',
+        method="bilinear",
         antialias=True,
     )
     mask_indices = encode_to_codebook_indices(CHECKPOINT, tensor_mask)[0]
@@ -161,12 +165,12 @@ def create_output_for_paligemma(
         if len(contours_r) == 0:
             contours_r = [cnt for cnt in reduced_contours]
 
-        # plot the image and the contours
+        # # plot the image and the contours
         # plot_image_and_contours(mask, contours_r)
 
         # Define the tokens for the output
-        loc_tokens = tf.constant(['<loc%04d>' % i for i in range(1024)])
-        seg_tokens = tf.constant(['<seg%03d>' % i for i in range(128)])
+        loc_tokens = tf.constant(["<loc%04d>" % i for i in range(1024)])
+        seg_tokens = tf.constant(["<seg%03d>" % i for i in range(128)])
 
         # For each contour, get the output for paligemma
         paligemma_output = []
@@ -176,7 +180,9 @@ def create_output_for_paligemma(
             x1, y1, x2, y2 = get_bounding_box(contour)
 
             # Get formatted bbox
-            bbox_loc_string = format_bbox(y1, x1, y2, x2, im_height, im_width, loc_tokens)
+            bbox_loc_string = format_bbox(
+                y1, x1, y2, x2, im_height, im_width, loc_tokens
+            )
 
             # get the corresponding mask of the contour
             bool_mask = get_mask_from_contour(im_height, im_width, contour)
@@ -186,9 +192,7 @@ def create_output_for_paligemma(
 
             suffix = tf.strings.join([bbox_loc_string, mask_loc_string])
 
-            paligemma_output.append(
-                f"{suffix.numpy().decode('utf-8')} {cclass}"
-            )
+            paligemma_output.append(f"{suffix.numpy().decode('utf-8')} {cclass}")
 
         paligemma_output = " ; ".join(paligemma_output)
 
@@ -275,12 +279,8 @@ def main(
     os.makedirs(output_path, exist_ok=True)
 
     # Read the txt files with the list of images for train and test
-    images_train_set = get_file_names(
-        data_path=data_path, file_name="train_images.txt"
-    )
-    images_test_set = get_file_names(
-        data_path=data_path, file_name="test_images.txt"
-    )
+    images_train_set = get_file_names(data_path=data_path, file_name="train_images.txt")
+    images_test_set = get_file_names(data_path=data_path, file_name="test_images.txt")
 
     # create the Paligemma output for each dataset
     dataset_names = ["train", "test"]
@@ -302,9 +302,7 @@ def main(
             )
             paligemma_list.append(output_line)
 
-        logging.info(
-            f"{len(paligemma_list)} added files out of {len(list_images)}."
-        )
+        logging.info(f"{len(paligemma_list)} added files out of {len(list_images)}.")
         output_filename = dataset + ".jsonl"
         full_out_path = os.path.join(output_path, output_filename)
         logging.info(f"Writing the results to {full_out_path}.")
