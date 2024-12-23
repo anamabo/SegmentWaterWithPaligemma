@@ -16,10 +16,12 @@ open a terminal and type the following commands:
 > cd <path to SegmentWaterWithPaligemma>
 > pipenv install --dev
 > pipenv shell
+> git clone --quiet --branch=main --depth=1 https://github.com/google-research/big_vision big_vision
 > pre-commit install 
 ```
+The last two commands will install Big Vision and the pre-commit hooks. 
+The pre-commit hooks will check the code before committing.
 
-This last plugin will facilitate and automate the code formatting.
 
 ***Note:*** If you use VS Code or Pycharm, make sure to set up your Python interpreter 
 to the virtual environment created.
@@ -45,7 +47,7 @@ This subfolder contains the images and the JSONL format needed as input for Pali
 In your Google Drive:
 * Create a folder for this project.
 * In that folder upload `water_bodies/` 
-* Also copy [This notebook](https://colab.research.google.com/drive/1t64cFa9RxjLn8_gLib64rbW_LyYuBKgE?usp=sharing). 
+* copy the notebook accompanying this repository.
 * Make sure to set a proper running time. It can be T4 GPU or A 100 GPU. 
 
 You are ready to fine-tune Paligemma for segmentation.
