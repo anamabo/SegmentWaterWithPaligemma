@@ -1,6 +1,6 @@
 # Segment Water in Satellite images with Paligemma
 This repository has Python scripts to create a dataset for Paligemma to segment water in satellite images.
-The blog post of this project can be found [here](TB ADDED).
+The blog post of this project can be found [here](https://medium.com/p/b172dc0cf55d/edit).
 
 ## Prerequisites 
 - Python 3.12 
